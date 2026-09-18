@@ -223,13 +223,16 @@ async def resolve_by_job_id(store_id: str, job_id: str) -> str | None:
     return ids[0] if ids else None
 
 
-async def find_active_profile_among(store_id: str, profile_ids: list[str]) -> dict | None:
-    """Given a caller-supplied list of profile ids (from the local phone
-    index), return the first whose `Job.status == 'active'`, or None.
+async def find_active_profiles_among(store_id: str, profile_ids: list[str]) -> list[dict]:
+    """Every profile in `profile_ids` whose `Job.status == 'active'`.
 
-    Returns the full profile object so callers can read traits without a
-    second GET. Profile ids that no longer exist in Memory are skipped.
+    Returns full profile objects so callers can read traits without a second
+    GET. Profile ids that no longer exist in Memory are skipped. The tech may
+    hold multiple active jobs concurrently — inbound-SMS routing uses the
+    length of this list to decide whether to auto-route or ask the tech to
+    disambiguate with a job ID prefix.
     """
+    out = []
     for pid in profile_ids:
         try:
             prof = await get_profile(store_id, pid)
@@ -239,8 +242,8 @@ async def find_active_profile_among(store_id: str, profile_ids: list[str]) -> di
             raise
         job = (prof.get("traits") or {}).get("Job") or {}
         if job.get("status") == "active":
-            return prof
-    return None
+            out.append(prof)
+    return out
 
 
 async def list_profiles(store_id: str, profile_ids: list[str]) -> list[dict]:

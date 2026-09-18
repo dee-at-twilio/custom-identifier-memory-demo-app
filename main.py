@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape as xml_escape
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, Form, HTTPException, Request
@@ -276,18 +277,9 @@ async def assign_job(body: AssignJobBody) -> dict:
         raise HTTPException(400, "jobID is required.")
     job_id = body.jobID.strip()
 
-    # 1. Refuse if this tech already has an active job.
-    #    Local phone index gives us the candidate profile ids; Memory can't
-    #    answer "which profiles belong to this phone?" on its own.
-    known_ids = state.profiles_for_phone(TECH_PHONE)
-    active_prof = await tw.find_active_profile_among(STORE_ID, known_ids)
-    if active_prof:
-        active_job_id = _profile_job_id(active_prof) or "?"
-        raise HTTPException(
-            409,
-            f"Technician {TECH_PHONE} already has an active job (jobID={active_job_id}). "
-            "Complete or pause it before assigning a new one.",
-        )
+    # The tech may hold multiple active jobs concurrently. Inbound SMS
+    # routing disambiguates via a jobID prefix in the message body (see
+    # `_route_inbound_sms`), so no uniqueness guardrail is needed here.
 
     # 2. Create/resolve the profile via jobID. The response carries the
     #    resolved profile's current traits — including any prior Job.conversationId
@@ -474,24 +466,9 @@ async def delete_profile(profile_id: str) -> dict:
 
 @app.post("/api/reactivate-job")
 async def reactivate_job(body: ProfileBody) -> dict:
-    # Pause any current active for this tech, and inactivate its Twilio conversation
-    # so Orchestrator doesn't have two ACTIVE threads on the same phone number.
-    known_ids = state.profiles_for_phone(TECH_PHONE)
-    active_prof = await tw.find_active_profile_among(STORE_ID, known_ids)
-    if active_prof and active_prof.get("id") != body.profileId:
-        active_pid = active_prof["id"]
-        active_conv_id = _job_traits(active_prof).get("conversationId")
-        await tw.patch_profile_traits(
-            STORE_ID,
-            active_pid,
-            {"Job": {"status": "paused", "lastActiveAt": _now_iso()}},
-        )
-        if active_conv_id:
-            try:
-                await tw.set_conversation_state(active_conv_id, "INACTIVE")
-                log.info("reactivate paused prior conversation %s", active_conv_id)
-            except tw.TwilioError as e:
-                log.warning("could not inactivate prior conversation %s: %s", active_conv_id, e)
+    # Multi-active is allowed — reactivating this profile does NOT touch any
+    # other active job for the same tech. Concurrent conversations coexist
+    # under distinct channelIds.
 
     # Read the target profile once to see its current conversation state.
     prof = await tw.get_profile(STORE_ID, body.profileId)
@@ -539,34 +516,89 @@ async def reactivate_job(body: ProfileBody) -> dict:
 
 # ---------------- routes: webhook ----------------
 
-async def _route_inbound_sms(from_: str, to: str, body: str, message_sid: str | None) -> PlainTextResponse:
-    """Route an inbound SMS (from either the number-level webhook or the generic /webhook)."""
-    log.info("Inbound SMS: MessageSid=%s From=%s To=%s Body=%r", message_sid, from_, to, body[:200])
-    known_ids = state.profiles_for_phone(from_)
-    active_prof = await tw.find_active_profile_among(STORE_ID, known_ids)
-    if not active_prof:
-        log.warning("No active profile found for phone=%s — replying with 'not assigned' TwiML.", from_)
-        twiml = (
-            "<?xml version='1.0' encoding='UTF-8'?>"
-            "<Response><Message>You're not currently assigned to a job. "
-            "Please contact dispatch.</Message></Response>"
-        )
-        return PlainTextResponse(twiml, media_type="application/xml")
-    active_pid = active_prof["id"]
-    conv_id = _job_traits(active_prof).get("conversationId")
-    log.info("Routed to active profile=%s conversationId=%s", active_pid, conv_id)
-    if not conv_id:
-        log.warning("Active profile=%s has no conversationId trait — replying with fallback TwiML.", active_pid)
-        twiml = (
-            "<?xml version='1.0' encoding='UTF-8'?>"
-            "<Response><Message>No active conversation for your job. Contact dispatch.</Message></Response>"
-        )
-        return PlainTextResponse(twiml, media_type="application/xml")
-    await _handle_inbound(conv_id, body, simulated=False)
+def _twiml_reply(message: str) -> PlainTextResponse:
+    twiml = (
+        "<?xml version='1.0' encoding='UTF-8'?>"
+        f"<Response><Message>{xml_escape(message)}</Message></Response>"
+    )
+    return PlainTextResponse(twiml, media_type="application/xml")
+
+
+def _twiml_empty() -> PlainTextResponse:
     return PlainTextResponse(
         "<?xml version='1.0' encoding='UTF-8'?><Response/>",
         media_type="application/xml",
     )
+
+
+def _extract_job_prefix(body: str, active_job_ids: set[str]) -> tuple[str | None, str]:
+    """If `body` starts with a token matching an active jobID, return
+    (matched_job_id_upper, remainder). Trailing punctuation on the token
+    (`:`, `,`, `.`, `;`) is stripped. Match is case-insensitive.
+    """
+    stripped = body.strip()
+    if not stripped:
+        return None, ""
+    first, _, rest = stripped.partition(" ")
+    token = first.rstrip(":,.;").upper()
+    if token in active_job_ids:
+        return token, rest.strip()
+    return None, stripped
+
+
+async def _route_inbound_sms(from_: str, to: str, body: str, message_sid: str | None) -> PlainTextResponse:
+    """Route an inbound SMS (from either the number-level webhook or the generic /webhook).
+
+    Multi-active resolution:
+      * 0 active profiles for `from_`   → "not assigned" TwiML.
+      * 1 active profile                → route the body as-is.
+      * >1 active profiles              → require a jobID token as the first
+        whitespace-delimited word. If it matches one of the tech's active
+        jobs, route to that job's conversation with the token stripped from
+        the body. Otherwise reply asking the tech to prefix.
+    """
+    log.info("Inbound SMS: MessageSid=%s From=%s To=%s Body=%r", message_sid, from_, to, body[:200])
+    known_ids = state.profiles_for_phone(from_)
+    actives = await tw.find_active_profiles_among(STORE_ID, known_ids)
+    if not actives:
+        log.warning("No active profile found for phone=%s — replying with 'not assigned' TwiML.", from_)
+        return _twiml_reply("You're not currently assigned to a job. Please contact dispatch.")
+
+    if len(actives) == 1:
+        chosen = actives[0]
+        routed_text = body
+    else:
+        by_job: dict[str, dict] = {}
+        for p in actives:
+            jid = _profile_job_id(p)
+            if jid:
+                by_job[jid.upper()] = p
+        matched, remainder = _extract_job_prefix(body, set(by_job.keys()))
+        if matched is None:
+            job_list = ", ".join(sorted(by_job.keys()))
+            example = sorted(by_job.keys())[0]
+            log.info(
+                "Ambiguous inbound for phone=%s with %d active jobs (%s); asking tech to prefix.",
+                from_, len(actives), job_list,
+            )
+            return _twiml_reply(
+                f"You have {len(actives)} active jobs: {job_list}. "
+                f'Start your message with the Job ID (e.g. "{example} on site").'
+            )
+        chosen = by_job[matched]
+        routed_text = remainder
+
+    chosen_pid = chosen["id"]
+    conv_id = _job_traits(chosen).get("conversationId")
+    log.info(
+        "Routed inbound from phone=%s to profile=%s conversationId=%s (activeCount=%d)",
+        from_, chosen_pid, conv_id, len(actives),
+    )
+    if not conv_id:
+        log.warning("Active profile=%s has no conversationId trait — replying with fallback TwiML.", chosen_pid)
+        return _twiml_reply("No active conversation for your job. Contact dispatch.")
+    await _handle_inbound(conv_id, routed_text, simulated=False)
+    return _twiml_empty()
 
 
 @app.post("/webhooks/sms/ai")

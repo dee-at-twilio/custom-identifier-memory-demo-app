@@ -2,8 +2,8 @@
 
 Without a `mobile` (or `phone`) identifier on tech profiles, Memory can't answer
 "which profiles belong to this phone?" — so the app has to remember it locally.
-Every profile ever created for a given phone is recorded here; `find_active_profile`
-iterates and filters by `Job.status == "active"`.
+Every profile ever created for a given phone is recorded here;
+`find_active_profiles_among` iterates and filters by `Job.status == "active"`.
 
 The file lives at STATE_FILE (default: `.state/phone_index.json` next to this
 module). It's plain JSON: `{"phone_number": ["profile_id_1", ...]}`.
