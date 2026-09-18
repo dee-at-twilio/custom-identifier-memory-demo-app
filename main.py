@@ -193,6 +193,18 @@ def _channel_id_for(participant: dict, address: str) -> str | None:
     return None
 
 
+def _action_message_sid(action: dict | None) -> str | None:
+    """Pull the SMxxxx Message SID out of a send_message_action response.
+
+    Shape: `{"related": {"messageSid": "SMxxxx"}, ...}`. Returned SID is
+    passed as `resource_id` on the paired `record_communication` so the
+    Communication resource cross-links to the underlying SMS.
+    """
+    if not action:
+        return None
+    return ((action.get("related") or {}).get("messageSid")) or None
+
+
 # ---------------- routes: UI ----------------
 
 @app.get("/")
@@ -338,7 +350,7 @@ async def assign_job(body: AssignJobBody) -> dict:
     )
     log.info("assign_job welcome message conversationId=%s jobId=%s", conv_id, job_id)
     try:
-        await tw.send_message_action(
+        action = await tw.send_message_action(
             conversation_id=conv_id,
             sender_participant_id=ai["id"],
             recipient_participant_id=tech["id"],
@@ -354,6 +366,7 @@ async def assign_job(body: AssignJobBody) -> dict:
             recipient_address=TECH_PHONE,
             text=welcome,
             channel_id=channel_id,
+            resource_id=_action_message_sid(action),
         )
     except tw.TwilioError as e:
         log.exception("assign_job welcome send failed: %s", e)
@@ -403,6 +416,7 @@ async def admin_send(body: SendBody) -> dict:
         recipient_address=TECH_PHONE,
         text=prefixed,
         channel_id=channel_id,
+        resource_id=_action_message_sid(result),
     )
     return {"ok": True, "action": result}
 
@@ -765,7 +779,7 @@ async def _handle_inbound(conversation_id: str, text: str, simulated: bool) -> d
     log.info("LLM reply generated (%d chars): %r", len(reply or ""), (reply or "")[:200])
     if reply:
         try:
-            await tw.send_message_action(
+            action = await tw.send_message_action(
                 conversation_id=conversation_id,
                 sender_participant_id=ai["id"],
                 recipient_participant_id=tech["id"],
@@ -783,6 +797,7 @@ async def _handle_inbound(conversation_id: str, text: str, simulated: bool) -> d
                 recipient_address=TECH_PHONE,
                 text=reply,
                 channel_id=channel_id,
+                resource_id=_action_message_sid(action),
             )
         except tw.TwilioError as e:
             log.exception("AI reply /Actions call failed: %s", e)

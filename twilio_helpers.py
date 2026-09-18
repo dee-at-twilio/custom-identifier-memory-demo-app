@@ -444,8 +444,16 @@ async def record_communication(
     recipient_address: str,
     text: str,
     channel_id: str | None = None,
+    resource_id: str | None = None,
 ) -> dict:
-    """Record that a message occurred. Does NOT emit an SMS. Use for inbound tech messages."""
+    """Record that a message occurred. Does NOT emit an SMS.
+
+    `resource_id` should be the Twilio Message SID (`SMxxxx`) for outbound
+    messages sent via `send_message_action` — read it from
+    `action["related"]["messageSid"]`. Setting it cross-links the
+    Communication with the underlying SMS resource so status callbacks and
+    the Console show one unified thread.
+    """
     payload: dict[str, Any] = {
         "author": {
             "address": author_address,
@@ -463,6 +471,8 @@ async def record_communication(
     }
     if channel_id:
         payload["channelId"] = channel_id
+    if resource_id:
+        payload["resourceId"] = resource_id
     return await _req(
         "POST",
         f"{CONV_V2_BASE}/Conversations/{conversation_id}/Communications",
