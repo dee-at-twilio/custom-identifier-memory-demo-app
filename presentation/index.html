@@ -693,6 +693,274 @@
   </section>
 
   <!-- ============================================================ -->
+  <!-- SLIDE 4c — With jobID identifier · Architecture              -->
+  <!-- ============================================================ -->
+  <section class="slide" data-menu="Architecture" data-menu-group="With jobID identifier">
+    <div class="slide-inner">
+      <div class="eyebrow violet">With jobID as unique identifier</div>
+      <h1>A third option: <em style="font-style: italic;">jobID</em> is the profile key, phone is a trait.</h1>
+      <p class="lede">
+        Available today without the gated composite feature. The custom
+        <code>jobID</code> identifier (<code>enforceUnique: true</code>) gives one profile
+        per job. The tech's phone number lives as a trait, not an identifier —
+        so Memory can't answer "which profiles belong to this phone?" on its
+        own. The app carries a <strong>tiny external index</strong> for that one lookup.
+      </p>
+
+      <div class="diagram-panel">
+        <div class="diagram-label">Runtime flow · jobID identifier + external phone→jobIDs index</div>
+        <svg viewBox="0 0 1300 640" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arr2v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#7A6A9E"/>
+            </marker>
+            <marker id="arr2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4E7089"/>
+            </marker>
+          </defs>
+          <style>
+            .v-b  { font-family: 'IBM Plex Sans', sans-serif; font-size: 12.5px; fill: #2B241E; }
+            .v-m  { font-family: 'IBM Plex Mono', monospace; font-size: 11px; fill: #6C5F51; }
+            .v-h  { font-family: 'Fraunces', serif; font-size: 14.5px; fill: #2B241E; font-weight: 600; }
+            .v-s  { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: #A89A87; }
+            .v-tag{ font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; fill: #7A6A9E; }
+            .v-tb { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; fill: #4E7089; }
+            .box    { fill: #FDFAF3; stroke: rgba(43,36,30,0.28); stroke-width: 1; }
+            .box-idx{ fill: rgba(122,106,158,0.10); stroke: #7A6A9E; stroke-width: 1.4; }
+            .box-mem{ fill: rgba(78,112,137,0.06); stroke: #4E7089; stroke-width: 1.4; }
+            .box-p-act  { fill: rgba(78,112,137,0.14); stroke: #4E7089; stroke-width: 1.4; }
+            .box-p-done { fill: rgba(122,106,158,0.10); stroke: #7A6A9E; stroke-width: 1; }
+            .box-app { fill: rgba(181,80,46,0.06); stroke: #B5502E; stroke-width: 1.2; stroke-dasharray: 5 3; }
+            .box-conv { fill: #FDFAF3; stroke: rgba(43,36,30,0.32); stroke-width: 1; stroke-dasharray: 4 3; }
+            .flow-v { stroke: #7A6A9E; stroke-width: 1.8; fill: none; }
+            .flow-b { stroke: #4E7089; stroke-width: 1.8; fill: none; }
+          </style>
+
+          <!-- Top row: phone → twilio number → router → external index -->
+          <rect class="box" x="20" y="24" width="150" height="52" rx="4"/>
+          <text class="v-h" x="95" y="46" text-anchor="middle">Tech phone</text>
+          <text class="v-m" x="95" y="64" text-anchor="middle">+44 7…</text>
+
+          <rect class="box" x="220" y="24" width="170" height="52" rx="4"/>
+          <text class="v-h" x="305" y="46" text-anchor="middle">Twilio number</text>
+          <text class="v-m" x="305" y="64" text-anchor="middle">inbound SMS webhook</text>
+
+          <rect class="box-app" x="440" y="24" width="200" height="52" rx="4"/>
+          <text class="v-h" x="540" y="46" text-anchor="middle">Router / handler</text>
+          <text class="v-tag" x="540" y="64" text-anchor="middle">two lookups per inbound</text>
+
+          <line class="flow-v" x1="170" y1="50" x2="220" y2="50" marker-end="url(#arr2v)"/>
+          <line class="flow-v" x1="390" y1="50" x2="440" y2="50" marker-end="url(#arr2v)"/>
+
+          <!-- ① Router → External phone index (right of router) -->
+          <line class="flow-v" x1="640" y1="50" x2="720" y2="50" marker-end="url(#arr2v)"/>
+          <text class="v-tag" x="680" y="42" text-anchor="middle">① phone</text>
+
+          <!-- External phone→jobIDs index (top-right) -->
+          <rect class="box-idx" x="720" y="24" width="540" height="112" rx="6"/>
+          <text class="v-h" x="738" y="46">External phone→jobIDs index</text>
+          <text class="v-tag" x="738" y="62">tiny — one row per phone · returns [profileIds] for the phone</text>
+          <rect class="box" x="740" y="72" width="500" height="52" rx="3"/>
+          <text class="v-m" x="752" y="92">+44 7… → [PR_a1b2, PR_c3d4, PR_e5f6]</text>
+          <text class="v-s" x="752" y="112">JSON file · KV · two-column SQL — the only external state.</text>
+
+          <!-- ② Router → Memory Store (down-left) -->
+          <path class="flow-b" d="M470 76 L470 118 L200 118 L200 160" marker-end="url(#arr2b)"/>
+          <text class="v-tb" x="212" y="112" text-anchor="start">② GET each profileId · keep Job.status = "active"</text>
+
+          <!-- Twilio Memory Store (below, left) -->
+          <rect class="box-mem" x="60" y="160" width="720" height="360" rx="6"/>
+          <text class="v-h" x="80" y="184">Twilio Memory Store</text>
+          <text class="v-tb" x="80" y="200">identifiers: chat, jobID (enforceUnique) · mobile is a trait</text>
+
+          <!-- Profile 4521 (active) -->
+          <rect class="box-p-act" x="80" y="220" width="680" height="82" rx="4"/>
+          <text class="v-h" x="94" y="242">Profile (jobID = 4521)</text>
+          <text class="v-tb" x="744" y="242" text-anchor="end">● active</text>
+          <text class="v-b" x="94" y="262">Job.mobile = +44 7… · Job.conversationId</text>
+          <text class="v-m" x="94" y="282">observations: 6 · summaries: 0</text>
+
+          <!-- Profile 4522 (active) -->
+          <rect class="box-p-act" x="80" y="316" width="680" height="82" rx="4"/>
+          <text class="v-h" x="94" y="338">Profile (jobID = 4522)</text>
+          <text class="v-tb" x="744" y="338" text-anchor="end">● active</text>
+          <text class="v-b" x="94" y="358">Job.mobile = +44 7… · Job.conversationId</text>
+          <text class="v-m" x="94" y="378">multi-active on one phone — coexists with 4521</text>
+
+          <!-- Profile 4520 (completed) -->
+          <rect class="box-p-done" x="80" y="412" width="680" height="94" rx="4"/>
+          <text class="v-h" x="94" y="434">Profile (jobID = 4520)</text>
+          <text class="v-tag" x="744" y="434" text-anchor="end" fill="#7A6A9E">● completed</text>
+          <text class="v-b" x="94" y="454">Job.mobile = +44 7… · summaries: 2</text>
+          <text class="v-s" x="94" y="472">reactivate → fresh conversation on the same profile</text>
+          <text class="v-s" x="94" y="486">history intact via unscoped Recall</text>
+
+          <!-- Conversations column (right of Memory, mirrors 'With composite') -->
+          <text class="v-h" x="820" y="184">Twilio Conversations</text>
+          <text class="v-s" x="820" y="200">one thread per (active) job — profileId on each participant</text>
+
+          <!-- Conversation A → 4521 -->
+          <rect class="box-conv" x="840" y="234" width="400" height="52" rx="4"/>
+          <text class="v-h" x="856" y="255">Conversation A</text>
+          <text class="v-m" x="856" y="272">open · linked to jobID 4521</text>
+          <path class="flow-b" d="M760 260 L840 260" marker-end="url(#arr2b)"/>
+
+          <!-- Conversation B → 4522 -->
+          <rect class="box-conv" x="840" y="330" width="400" height="52" rx="4"/>
+          <text class="v-h" x="856" y="351">Conversation B</text>
+          <text class="v-m" x="856" y="368">open · linked to jobID 4522</text>
+          <path class="flow-b" d="M760 356 L840 356" marker-end="url(#arr2b)"/>
+
+          <!-- Conversations C, D → 4520 -->
+          <rect class="box-conv" x="840" y="426" width="400" height="72" rx="4"/>
+          <text class="v-h" x="856" y="447">Conversations C, D</text>
+          <text class="v-m" x="856" y="464">closed · linked to jobID 4520</text>
+          <text class="v-s" x="856" y="482">reactivate → fresh Conversation E, same profile</text>
+          <path class="flow-b" d="M760 462 L840 462" marker-end="url(#arr2b)"/>
+
+          <!-- ③ Disambiguation banner (bottom) -->
+          <rect class="box-idx" x="60" y="556" width="1200" height="60" rx="4"/>
+          <text class="v-h" x="76" y="578">③ Multi-active disambiguation happens in the app</text>
+          <text class="v-tag" x="76" y="600">If >1 active for the phone, the router replies asking the tech to prefix the message with a Job ID (e.g. <tspan style="font-family:'IBM Plex Mono',monospace">"4521 on site"</tspan>).</text>
+        </svg>
+      </div>
+      <p class="diagram-caption">
+        Twilio Memory is still the source of truth for job data. The external
+        index carries only one column of information: phone → profileIds.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 4d — With jobID identifier · Trade-offs                -->
+  <!-- ============================================================ -->
+  <section class="slide" data-menu="Trade-offs" data-menu-group="With jobID identifier">
+    <div class="slide-inner">
+      <div class="eyebrow violet">With jobID as unique identifier</div>
+      <h2>Available today — with one caveat you own.</h2>
+
+      <div class="points">
+        <div class="point violet">
+          <div class="p-title">Job isolation is still a Memory primitive</div>
+          <div class="p-desc">
+            One profile per job, keyed by the custom <code>jobID</code> identifier.
+            Observations and summaries scope naturally; <code>Recall</code> returns
+            one job's history at a time. CINTEL summaries still land on the right
+            profile automatically because the participant carries its
+            <code>profileId</code>.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">One tiny external table — <code>phone → [profileIds]</code></div>
+          <div class="p-desc">
+            Because <code>mobile</code> is a trait, not an identifier, Memory
+            can't answer "which profiles belong to this phone?" A JSON file,
+            a Redis hash, or a two-column SQL table is enough. Written on
+            assign, read on inbound SMS.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">Multiple active jobs per tech, by design</div>
+          <div class="p-desc">
+            Nothing prevents a technician from having several concurrent active
+            jobs. Conversations for each live under distinct
+            <code>channelId</code>s. Inbound SMS routing disambiguates in the
+            app: if only one active exists, route it; otherwise, reply asking
+            the tech to prefix the message with the Job ID.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">Available on GA Memory — no gated features</div>
+          <div class="p-desc">
+            No <code>phone AND jobID</code> matching rule needed. Standard
+            identifier config plus one custom identifier with
+            <code>enforceUnique: true</code>. Ships today.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">The caveat: routing is a two-hop lookup</div>
+          <div class="p-desc">
+            Every inbound SMS costs one external-index read plus N Memory
+            GETs (one per profile the tech has ever held). Composite keys
+            fold this into a single Twilio call; here, the app carries it.
+            Small, but real — and worth budgeting for at scale.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">Two systems, but the split is boring</div>
+          <div class="p-desc">
+            Unlike the phone-only architecture (where Memory becomes redundant
+            and the DB owns job identity), here the external store only holds
+            a phone→profileIds map. Everything semantic — status, timestamps,
+            conversation wiring, observations, summaries — stays in Memory.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 4e — With jobID identifier · Assign new job (Mermaid)  -->
+  <!-- ============================================================ -->
+  <section class="slide" data-menu="Assign new job (Mermaid)" data-menu-group="With jobID identifier">
+    <div class="slide-inner">
+      <div class="eyebrow violet">Sequence · Assign new job · jobID identifier</div>
+      <h1>One extra hop for the phone index — the rest is Twilio.</h1>
+      <p class="lede">
+        The uniqueness guardrail is gone; multiple active jobs per tech are
+        allowed. <code>state.py</code> owns the phone → [profileIds] map (a
+        JSON file); Twilio Memory owns everything semantic about the job.
+      </p>
+
+      <div class="diagram-panel uml" style="padding: 24px 32px;">
+        <div class="diagram-label">POST /api/assign-job · Mermaid version</div>
+        <pre class="mermaid" style="background: transparent; margin: 0; text-align: center;">
+sequenceDiagram
+  autonumber
+  actor UI as Admin UI
+  participant App as App
+  participant Idx as Phone index (state.py)
+  participant Mem as Twilio Memory
+  participant CV1 as Conversation v1
+  participant Orc as Orchestrator v2
+  actor Tech as Tech phone
+
+  UI->>App: POST /api/assign-job { job_id }
+  activate App
+  Note over App: no uniqueness guardrail —<br/>multiple actives per phone are allowed
+
+  App->>Mem: POST /Stores/{store_id}/Profiles<br/>Contact:{ jobID }, Job:{ status:"active", mobile: TECH_PHONE }
+  Note over Mem: jobID identifier enforceUnique: true<br/>→ resolves to existing profile if this jobID already exists
+  Mem-->>App: profile { profile_id, traits.Job }
+
+  App->>Idx: record_profile(TECH_PHONE, profile_id)
+  Note over Idx: JSON file at .state/phone_index.json<br/>+44 7… → [PR_a1b2, PR_c3d4, PR_e5f6]
+
+  alt no reusable Job.conversation_id
+    App->>CV1: POST /v1/Services/{service_id}/Conversations
+    CV1-->>App: channel_id = "CH…"
+    App->>Orc: POST /v2/Conversations<br/>orchestrator_config_id + participant (CUSTOMER, SMS, TECH_PHONE, channel_id) + participant (AI_AGENT, SMS, TWILIO_PHONE, channel_id)
+    Orc-->>App: conversation_id
+    App->>Mem: PATCH /Profiles/{id}<br/>Job:{ status, lastActiveAt, conversation_id, channel_id }
+  end
+
+  App->>Orc: POST /Conversations/{conversation_id}/Actions<br/>SEND_MESSAGE · AI_NUMBER → TECH_PHONE
+  Orc-->>App: action { related.messageSid = "SM…" }
+  Orc->>Tech: SMS delivered
+  App->>Orc: POST /Conversations/{conversation_id}/Communications<br/>resourceId = messageSid (cross-links status callbacks)
+  App-->>UI: 200 OK { profile_id, conversation_id }
+  deactivate App
+        </pre>
+      </div>
+      <p class="diagram-caption">
+        The only extra actor vs. the composite-key flow is
+        <code>Phone index</code> — one line of app-owned bookkeeping so the
+        inbound-SMS router can answer "which profiles belong to this phone?"
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
   <!-- SLIDE — Sequence diagrams · Assign new job                    -->
   <!-- ============================================================ -->
   <section class="slide" data-menu="Assign new job" data-menu-group="Sequence diagrams">

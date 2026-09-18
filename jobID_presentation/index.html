@@ -1,0 +1,689 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Composite-Key Memory — Architecture Differentiation</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #F5EFE3;
+    --bg-alt: #EFE7D6;
+    --line: rgba(43,36,30,0.16);
+    --terracotta: #B5502E;  --terracotta-soft: rgba(181,80,46,0.12);
+    --dusty-blue: #4E7089;  --dusty-blue-soft: rgba(78,112,137,0.12);
+    --ochre: #A87A21;       --ochre-soft: rgba(168,122,33,0.13);
+    --violet: #7A6A9E;      --violet-soft: rgba(122,106,158,0.12);
+    --text: #2B241E;
+    --text-dim: #6C5F51;
+    --text-faint: #A89A87;
+    --font-h: 'Fraunces', Georgia, serif;
+    --font-b: 'IBM Plex Sans', sans-serif;
+    --font-m: 'IBM Plex Mono', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: var(--bg); color: var(--text); font-family: var(--font-b);
+    line-height: 1.6; -webkit-font-smoothing: antialiased; overflow: hidden;
+  }
+
+  .toolbar {
+    position: fixed; top: 0; left: 0; right: 0; height: 60px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 30px 0 84px; z-index: 20;
+    background: linear-gradient(to bottom, var(--bg) 55%, transparent);
+    transition: left 0.3s ease;
+  }
+  .toolbar .brand { font-family: var(--font-m); font-size: 12.5px; color: var(--text-faint); }
+
+  .side-menu-toggle {
+    position: fixed; top: 11px; left: 20px; z-index: 31;
+    width: 38px; height: 38px; border-radius: 50%;
+    border: 1.5px solid var(--line); background: var(--bg-alt); color: var(--text);
+    font-size: 15px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s ease;
+  }
+  .side-menu-toggle:hover { border-color: var(--terracotta); }
+
+  .side-menu-backdrop {
+    position: fixed; inset: 0; background: rgba(43,36,30,0.18);
+    z-index: 24; opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+  }
+  .side-menu-backdrop.open { opacity: 1; pointer-events: auto; }
+
+  .side-menu {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 250px;
+    background: var(--bg-alt); border-right: 1px dotted var(--line);
+    z-index: 25; padding: 78px 16px 20px; overflow-y: auto;
+    transform: translateX(-100%); transition: transform 0.3s ease;
+  }
+  .side-menu.open { transform: translateX(0); }
+  .side-menu-group {
+    font-family: var(--font-m); font-size: 10.5px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-faint);
+    padding: 14px 10px 6px 10px; border-top: 1px dotted var(--line); margin-top: 6px;
+  }
+  .side-menu-group:first-of-type { border-top: none; margin-top: 0; padding-top: 4px; }
+  .side-menu-item {
+    display: block; width: 100%; text-align: left; background: none; border: none;
+    font-family: var(--font-b); font-size: 14px; color: var(--text-dim);
+    padding: 10px 10px; border-radius: 6px; cursor: pointer; margin-bottom: 2px;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  .side-menu-item:hover { background: var(--bg); color: var(--text); }
+  .side-menu-item.active { color: var(--terracotta); font-weight: 600; background: var(--terracotta-soft); }
+
+  .viewport { position: relative; height: 100vh; width: 100%; transition: margin-left 0.3s ease, width 0.3s ease; }
+  .slide {
+    position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center;
+    padding: 104px 24px 96px; opacity: 0; transform: translateY(14px); pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.34s ease; overflow-y: auto;
+  }
+  .slide.active { opacity: 1; transform: translateY(0); pointer-events: auto; }
+  .slide-inner { max-width: 960px; width: 100%; margin: auto; }
+  .slide-inner.narrow { max-width: 760px; }
+
+  .eyebrow {
+    display: inline-block; font-family: var(--font-m); font-size: 12.5px; font-weight: 500;
+    color: var(--terracotta); border: 1.5px solid var(--terracotta);
+    padding: 4px 12px; border-radius: 4px; transform: rotate(-1.5deg);
+    margin-bottom: 22px;
+  }
+  .eyebrow.dusty { color: var(--dusty-blue); border-color: var(--dusty-blue); }
+  .eyebrow.ochre { color: var(--ochre); border-color: var(--ochre); }
+  .eyebrow.violet { color: var(--violet); border-color: var(--violet); }
+
+  h1 { font-family: var(--font-h); font-size: 40px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 14px; line-height: 1.15; }
+  h2 { font-family: var(--font-h); font-size: 32px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 10px; line-height: 1.2; }
+  .lede { color: var(--text-dim); font-size: 16px;  margin-bottom: 30px; }
+
+  .diagram-panel {
+    background: var(--bg-alt); border: 1px dotted var(--line); border-radius: 6px;
+    padding: 18px 20px 22px; margin-bottom: 18px;
+  }
+  .diagram-label {
+    font-family: var(--font-m); font-size: 10.5px; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--text-faint); margin-bottom: 12px;
+  }
+  .diagram-panel svg { display: block; width: 100%; height: auto; }
+  .diagram-caption {
+    color: var(--text-dim); font-size: 13.5px; font-family: var(--font-h);
+    font-style: italic; max-width: 760px; margin-top: 4px;
+  }
+
+  .points { display: flex; flex-direction: column; }
+  .point { padding: 16px 0 16px 22px; border-bottom: 1px dotted var(--line); position: relative; }
+  .point:last-child { border-bottom: none; }
+  .point::before { content: "✦"; position: absolute; left: 0; top: 18px; font-size: 11px; color: var(--terracotta); }
+  .point.dusty::before { color: var(--dusty-blue); }
+  .point.ochre::before { color: var(--ochre); }
+  .point.violet::before { color: var(--violet); }
+  .p-title { font-weight: 600; font-size: 15.5px; margin-bottom: 4px; }
+  .p-desc { color: var(--text-dim); font-size: 14.5px; max-width: 780px; }
+  .p-desc code { font-family: var(--font-m); font-size: 12.5px; background: var(--bg-alt); padding: 1px 5px; border-radius: 3px; color: var(--text); }
+
+  .compare {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 22px;
+  }
+  .compare-col {
+    background: var(--bg-alt); border: 1px dotted var(--line); border-radius: 6px;
+    padding: 20px 22px;
+  }
+  .compare-col.with { border-left: 3px solid var(--dusty-blue); }
+  .compare-col.without { border-left: 3px solid var(--ochre); }
+  .compare-col h3 {
+    font-family: var(--font-h); font-weight: 600; font-size: 20px;
+    margin-bottom: 6px;
+  }
+  .compare-col .sub {
+    font-family: var(--font-m); font-size: 11px; color: var(--text-faint);
+    letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 14px;
+  }
+  .compare-col ul { list-style: none; padding: 0; margin: 0; }
+  .compare-col li {
+    padding: 8px 0 8px 18px; position: relative; font-size: 14px; color: var(--text-dim);
+    border-bottom: 1px dotted var(--line);
+  }
+  .compare-col li:last-child { border-bottom: none; }
+  .compare-col.with li::before {
+    content: "✦"; position: absolute; left: 0; top: 8px; color: var(--dusty-blue); font-size: 10px;
+  }
+  .compare-col.without li::before {
+    content: "◦"; position: absolute; left: 0; top: 8px; color: var(--ochre); font-size: 12px;
+  }
+  .compare-col strong { color: var(--text); font-weight: 600; }
+
+  .kicker {
+    font-family: var(--font-h); font-size: 22px; font-weight: 500;
+    color: var(--text); max-width: 780px; margin-top: 8px; line-height: 1.35;
+  }
+  .kicker em { color: var(--terracotta); font-style: italic; }
+
+  .deck-nav {
+    position: fixed; bottom: 0; left: 0; right: 0; height: 78px;
+    display: flex; align-items: center; justify-content: center; gap: 22px; z-index: 20;
+    background: linear-gradient(to top, var(--bg) 55%, transparent);
+    transition: left 0.3s ease;
+  }
+  .nav-btn {
+    width: 38px; height: 38px; border-radius: 50%;
+    border: 1.5px solid var(--line); background: var(--bg-alt); color: var(--text);
+    font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: border-color 0.15s ease, opacity 0.15s ease;
+  }
+  .nav-btn:hover { border-color: var(--terracotta); }
+  .nav-btn:disabled { opacity: 0.3; cursor: default; }
+  .dots { display: flex; gap: 8px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--line); border: none; cursor: pointer; padding: 0; }
+  .dot.active { background: var(--terracotta); }
+  .counter { font-family: var(--font-m); font-size: 12px; color: var(--text-faint); min-width: 46px; text-align: center; }
+
+  @media (min-width: 900px) {
+    .side-menu-backdrop { display: none; }
+    body.menu-open .toolbar { left: 250px; }
+    body.menu-open .viewport { margin-left: 250px; width: calc(100% - 250px); }
+    body.menu-open .deck-nav { left: 250px; }
+  }
+
+  @media (max-width: 900px) {
+    .compare { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 640px) {
+    h1 { font-size: 30px; }
+    h2 { font-size: 24px; }
+    .slide { padding: 88px 18px 88px; }
+  }
+
+  @media print {
+    body { overflow: visible; height: auto; }
+    .toolbar, .deck-nav, .side-menu, .side-menu-toggle, .side-menu-backdrop { display: none; }
+    .viewport { height: auto; margin-left: 0 !important; width: 100% !important; }
+    .slide {
+      position: static; opacity: 1 !important; transform: none !important;
+      pointer-events: auto; height: auto; padding: 36px 24px;
+      page-break-after: always;
+    }
+  }
+
+  /* ==================================================================
+     UML Sequence Diagram — reusable template.
+     Change any value in this block and the whole diagram updates.
+     Wrap a `<svg class="uml-sequence">` around your diagram markup
+     and use the class names below on each element.
+     ================================================================== */
+  .uml-sequence {
+    /* fonts */
+    --uml-font:      -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --uml-font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, monospace;
+
+    /* colors — override any to re-skin */
+    --uml-bg:              #FFFFFF;
+    --uml-actor-fill:      #FDD35C;
+    --uml-actor-border:    #E8A62A;
+    --uml-actor-label:     #D9482E;
+    --uml-subtext:         #8B7A5A;
+    --uml-arrow:           #E88030;
+    --uml-arrow-sms:       #D9482E;
+    --uml-lifeline:        #E88030;
+    --uml-activation-fill: #F0EFEA;
+    --uml-activation-line: #B8B0A0;
+    --uml-msg-label:       #2B241E;
+    --uml-msg-body:        #4E4033;
+    --uml-note-fill:       #FFF6DC;
+    --uml-note-border:     #E8A62A;
+    --uml-note-text:       #4E4033;
+    --uml-alt-border:      #6BA4E7;
+    --uml-alt-tab-fill:    #EEF3F9;
+    --uml-alt-label:       #4E4033;
+    --uml-alt-guard:       #4A6B85;
+
+    /* type sizes */
+    --uml-size-actor:     15px;
+    --uml-size-sub:       11px;
+    --uml-size-label:     13.5px;
+    --uml-size-body:      11.5px;
+    --uml-size-note:      12px;
+    --uml-size-sms:       13.5px;
+    --uml-size-alt-label: 11px;
+    --uml-size-alt-guard: 12px;
+
+    /* line weights */
+    --uml-stroke-req:  1.8;
+    --uml-stroke-resp: 1.4;
+    --uml-stroke-sms:  2;
+    --uml-stroke-life: 1;
+    --uml-lifeline-dash: 5 5;
+    --uml-resp-dash:     7 4;
+  }
+  .uml-sequence .uml-bg           { fill: var(--uml-bg); }
+  .uml-sequence .uml-actor-pill   { fill: var(--uml-actor-fill); stroke: var(--uml-actor-border); stroke-width: 1.5; }
+  .uml-sequence .uml-actor-label  { font-family: var(--uml-font); font-size: var(--uml-size-actor); font-weight: 500; fill: var(--uml-actor-label); letter-spacing: -0.005em; }
+  .uml-sequence .uml-actor-sub    { font-family: var(--uml-font); font-size: var(--uml-size-sub); fill: var(--uml-subtext); }
+  .uml-sequence .uml-connector    { stroke: var(--uml-arrow); stroke-width: 1.5; fill: none; }
+  .uml-sequence .uml-lifeline     { stroke: var(--uml-lifeline); stroke-width: var(--uml-stroke-life); stroke-dasharray: var(--uml-lifeline-dash); opacity: 0.65; fill: none; }
+  .uml-sequence .uml-activation   { fill: var(--uml-activation-fill); stroke: var(--uml-activation-line); stroke-width: 1; }
+  .uml-sequence .uml-req          { stroke: var(--uml-arrow); stroke-width: var(--uml-stroke-req); fill: none; color: var(--uml-arrow); }
+  .uml-sequence .uml-resp         { stroke: var(--uml-arrow); stroke-width: var(--uml-stroke-resp); fill: none; stroke-dasharray: var(--uml-resp-dash); color: var(--uml-arrow); }
+  .uml-sequence .uml-sms          { stroke: var(--uml-arrow-sms); stroke-width: var(--uml-stroke-sms); fill: none; color: var(--uml-arrow-sms); }
+  .uml-sequence .uml-arrowhead    { fill: currentColor; }
+  .uml-sequence .uml-msg-label    { font-family: var(--uml-font); font-size: var(--uml-size-label); font-weight: 600; fill: var(--uml-msg-label); }
+  .uml-sequence .uml-msg-body     { font-family: var(--uml-font-mono); font-size: var(--uml-size-body); fill: var(--uml-msg-body); }
+  .uml-sequence .uml-msg-note     { font-family: var(--uml-font); font-size: var(--uml-size-note); fill: var(--uml-subtext); font-style: italic; }
+  .uml-sequence .uml-sms-label    { font-family: var(--uml-font); font-size: var(--uml-size-sms); font-weight: 600; fill: var(--uml-arrow-sms); }
+  .uml-sequence .uml-note-box     { fill: var(--uml-note-fill); stroke: var(--uml-note-border); stroke-width: 1; stroke-dasharray: 4 3; }
+  .uml-sequence .uml-note-text    { font-family: var(--uml-font); font-size: var(--uml-size-note); fill: var(--uml-note-text); }
+  .uml-sequence .uml-alt-frame    { fill: none; stroke: var(--uml-alt-border); stroke-width: 1.5; }
+  .uml-sequence .uml-alt-tab      { fill: var(--uml-alt-tab-fill); stroke: var(--uml-alt-border); stroke-width: 1.5; }
+  .uml-sequence .uml-alt-label    { font-family: var(--uml-font); font-size: var(--uml-size-alt-label); font-weight: 600; fill: var(--uml-alt-label); letter-spacing: 0.04em; text-transform: uppercase; }
+  .uml-sequence .uml-alt-guard    { font-family: var(--uml-font); font-size: var(--uml-size-alt-guard); fill: var(--uml-alt-guard); font-style: italic; }
+</style>
+</head>
+<body class="menu-open">
+
+<button class="side-menu-toggle" id="menu-toggle" aria-label="Toggle slide menu">☰</button>
+<div class="side-menu-backdrop" id="menu-backdrop"></div>
+<nav class="side-menu open" id="side-menu">
+  <!-- items and group dividers injected by script from data-menu / data-menu-group -->
+</nav>
+
+<div class="toolbar">
+  <div class="brand">Composite-Key Memory — Architecture Differentiation</div>
+</div>
+
+<div class="viewport" id="viewport">
+
+  <!-- ============================================================ -->
+  <!-- With jobID identifier · Architecture              -->
+  <!-- ============================================================ -->
+  <section class="slide" data-menu="Architecture" data-menu-group="With jobID identifier">
+    <div class="slide-inner">
+      <div class="eyebrow violet">With jobID as unique identifier</div>
+      <h1> <em style="font-style: italic;">jobID</em> is the identifier, phone is a trait.</h1>
+      <p class="lede">
+        The custom <code>jobID</code> identifier (<code>enforceUnique: true</code>) creates one profile
+        per job. The tech's phone number lives as a trait —
+        so Memory can't answer "which profiles belong to this phone?" on its
+        own. The app carries a <strong>tiny external index</strong> for that one lookup.
+      </p>
+
+      <div class="diagram-panel">
+        <div class="diagram-label">jobID identifier + external phone→jobIDs index</div>
+        <svg viewBox="0 0 1300 640" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arr2v" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#7A6A9E"/>
+            </marker>
+            <marker id="arr2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,0 L10,5 L0,10 z" fill="#4E7089"/>
+            </marker>
+          </defs>
+          <style>
+            .v-b  { font-family: 'IBM Plex Sans', sans-serif; font-size: 12.5px; fill: #2B241E; }
+            .v-m  { font-family: 'IBM Plex Mono', monospace; font-size: 11px; fill: #6C5F51; }
+            .v-h  { font-family: 'Fraunces', serif; font-size: 14.5px; fill: #2B241E; font-weight: 600; }
+            .v-s  { font-family: 'IBM Plex Mono', monospace; font-size: 10px; fill: #A89A87; }
+            .v-tag{ font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; fill: #7A6A9E; }
+            .v-tb { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; fill: #4E7089; }
+            .box    { fill: #FDFAF3; stroke: rgba(43,36,30,0.28); stroke-width: 1; }
+            .box-idx{ fill: rgba(122,106,158,0.10); stroke: #7A6A9E; stroke-width: 1.4; }
+            .box-mem{ fill: rgba(78,112,137,0.06); stroke: #4E7089; stroke-width: 1.4; }
+            .box-p-act  { fill: rgba(78,112,137,0.14); stroke: #4E7089; stroke-width: 1.4; }
+            .box-p-done { fill: rgba(122,106,158,0.10); stroke: #7A6A9E; stroke-width: 1; }
+            .box-app { fill: rgba(181,80,46,0.06); stroke: #B5502E; stroke-width: 1.2; stroke-dasharray: 5 3; }
+            .box-conv { fill: #FDFAF3; stroke: rgba(43,36,30,0.32); stroke-width: 1; stroke-dasharray: 4 3; }
+            .flow-v { stroke: #7A6A9E; stroke-width: 1.8; fill: none; }
+            .flow-b { stroke: #4E7089; stroke-width: 1.8; fill: none; }
+          </style>
+
+          <!-- Top row: phone → twilio number → router → external index -->
+          <rect class="box" x="20" y="24" width="150" height="52" rx="4"/>
+          <text class="v-h" x="95" y="46" text-anchor="middle">Tech phone</text>
+          <text class="v-m" x="95" y="64" text-anchor="middle">+44 7…</text>
+
+          <rect class="box" x="220" y="24" width="170" height="52" rx="4"/>
+          <text class="v-h" x="305" y="46" text-anchor="middle">Twilio number</text>
+          <text class="v-m" x="305" y="64" text-anchor="middle">inbound SMS webhook</text>
+
+          <rect class="box-app" x="440" y="24" width="200" height="52" rx="4"/>
+          <text class="v-h" x="540" y="46" text-anchor="middle">Router / handler</text>
+          <text class="v-tag" x="540" y="64" text-anchor="middle">two lookups per inbound</text>
+
+          <line class="flow-v" x1="170" y1="50" x2="220" y2="50" marker-end="url(#arr2v)"/>
+          <line class="flow-v" x1="390" y1="50" x2="440" y2="50" marker-end="url(#arr2v)"/>
+
+          <!-- ① Router → External phone index (right of router) -->
+          <line class="flow-v" x1="640" y1="50" x2="720" y2="50" marker-end="url(#arr2v)"/>
+          <text class="v-tag" x="680" y="42" text-anchor="middle">① phone</text>
+
+          <!-- External phone→jobIDs index (top-right) -->
+          <rect class="box-idx" x="720" y="24" width="540" height="112" rx="6"/>
+          <text class="v-h" x="738" y="46">External phone→jobIDs index</text>
+          <text class="v-tag" x="738" y="62">tiny — one row per phone · returns [profileIds] for the phone</text>
+          <rect class="box" x="740" y="72" width="500" height="52" rx="3"/>
+          <text class="v-m" x="752" y="92">+44 7… → [PR_a1b2, PR_c3d4, PR_e5f6]</text>
+          <text class="v-s" x="752" y="112">JSON file · KV · two-column SQL — the only external state.</text>
+
+          <!-- ② Router → Memory Store (down-left) -->
+          <path class="flow-b" d="M470 76 L470 118 L200 118 L200 160" marker-end="url(#arr2b)"/>
+          <text class="v-tb" x="212" y="112" text-anchor="start">② GET each profileId · keep Job.status = "active"</text>
+
+          <!-- Twilio Memory Store (below, left) -->
+          <rect class="box-mem" x="60" y="160" width="720" height="360" rx="6"/>
+          <text class="v-h" x="80" y="184">Twilio Memory Store</text>
+          <text class="v-tb" x="80" y="200">identifiers: chat, jobID (enforceUnique) · mobile is a trait</text>
+
+          <!-- Profile 4521 (active) -->
+          <rect class="box-p-act" x="80" y="220" width="680" height="82" rx="4"/>
+          <text class="v-h" x="94" y="242">Profile (jobID = 4521)</text>
+          <text class="v-tb" x="744" y="242" text-anchor="end">● active</text>
+          <text class="v-b" x="94" y="262">Job.mobile = +44 7… · Job.conversationId</text>
+          <text class="v-m" x="94" y="282">observations: 6 · summaries: 0</text>
+
+          <!-- Profile 4522 (active) -->
+          <rect class="box-p-act" x="80" y="316" width="680" height="82" rx="4"/>
+          <text class="v-h" x="94" y="338">Profile (jobID = 4522)</text>
+          <text class="v-tb" x="744" y="338" text-anchor="end">● active</text>
+          <text class="v-b" x="94" y="358">Job.mobile = +44 7… · Job.conversationId</text>
+          <text class="v-m" x="94" y="378">multi-active on one phone — coexists with 4521</text>
+
+          <!-- Profile 4520 (completed) -->
+          <rect class="box-p-done" x="80" y="412" width="680" height="94" rx="4"/>
+          <text class="v-h" x="94" y="434">Profile (jobID = 4520)</text>
+          <text class="v-tag" x="744" y="434" text-anchor="end" fill="#7A6A9E">● completed</text>
+          <text class="v-b" x="94" y="454">Job.mobile = +44 7… · summaries: 2</text>
+          <text class="v-s" x="94" y="472">reactivate → fresh conversation on the same profile</text>
+          <text class="v-s" x="94" y="486">history intact via unscoped Recall</text>
+
+          <!-- Conversations column (right of Memory, mirrors 'With composite') -->
+          <text class="v-h" x="820" y="184">Twilio Conversations</text>
+          <text class="v-s" x="820" y="200">one thread per (active) job — profileId on each participant</text>
+
+          <!-- Conversation A → 4521 -->
+          <rect class="box-conv" x="840" y="234" width="400" height="52" rx="4"/>
+          <text class="v-h" x="856" y="255">Conversation A</text>
+          <text class="v-m" x="856" y="272">open · linked to jobID 4521</text>
+          <path class="flow-b" d="M760 260 L840 260" marker-end="url(#arr2b)"/>
+
+          <!-- Conversation B → 4522 -->
+          <rect class="box-conv" x="840" y="330" width="400" height="52" rx="4"/>
+          <text class="v-h" x="856" y="351">Conversation B</text>
+          <text class="v-m" x="856" y="368">open · linked to jobID 4522</text>
+          <path class="flow-b" d="M760 356 L840 356" marker-end="url(#arr2b)"/>
+
+          <!-- Conversations C, D → 4520 -->
+          <rect class="box-conv" x="840" y="426" width="400" height="72" rx="4"/>
+          <text class="v-h" x="856" y="447">Conversations C, D</text>
+          <text class="v-m" x="856" y="464">closed · linked to jobID 4520</text>
+          <text class="v-s" x="856" y="482">reactivate → fresh Conversation E, same profile</text>
+          <path class="flow-b" d="M760 462 L840 462" marker-end="url(#arr2b)"/>
+
+          <!-- ③ Disambiguation banner (bottom) -->
+          <!-- <rect class="box-idx" x="60" y="556" width="1200" height="60" rx="4"/>
+          <text class="v-h" x="76" y="578">③ Multi-active disambiguation happens in the app</text>
+          <text class="v-tag" x="76" y="600">If >1 active for the phone, the router replies asking the tech to prefix the message with a Job ID (e.g. <tspan style="font-family:'IBM Plex Mono',monospace">"4521 on site"</tspan>).</text> -->
+        </svg>
+      </div>
+      <p class="diagram-caption">
+        Twilio Memory is still the source of truth for job data. The external
+        index carries only one column of information: phone → profileIds.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 4d — With jobID identifier · Trade-offs                -->
+  <!-- ============================================================ -->
+  <section class="slide" data-menu="Trade-offs" data-menu-group="With jobID identifier">
+    <div class="slide-inner">
+      <div class="eyebrow violet">With jobID as unique identifier</div>
+      <h2>Available today — with one caveat you own.</h2>
+
+      <div class="points">
+        <div class="point violet">
+          <div class="p-title">Job isolation is still a Memory primitive</div>
+          <div class="p-desc">
+            One profile per job, keyed by the custom <code>jobID</code> identifier.
+            Observations and summaries scope naturally; <code>Recall</code> returns
+            one job's history at a time. CINTEL summaries still land on the right
+            profile automatically because the participant carries its
+            <code>profileId</code>.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">One tiny external table — <code>phone → [profileIds]</code></div>
+          <div class="p-desc">
+            Because <code>mobile</code> is a trait, not an identifier, Memory
+            can't answer "which profiles belong to this phone?" A JSON file,
+            a Redis hash, or a two-column SQL table is enough. Written on
+            assign, read on inbound SMS.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">Multiple active jobs per tech, by design</div>
+          <div class="p-desc">
+            Nothing prevents a technician from having several concurrent active
+            jobs. Conversations for each live under distinct
+            <code>channelId</code>s. Inbound SMS routing disambiguates in the
+            app: if only one active exists, route it; otherwise, reply asking
+            the tech to prefix the message with the Job ID.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">Available on GA Memory — no gated features</div>
+          <div class="p-desc">
+            No <code>phone AND jobID</code> matching rule needed. Standard
+            identifier config plus one custom identifier with
+            <code>enforceUnique: true</code>. Ships today.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">The caveat: routing is a two-hop lookup</div>
+          <div class="p-desc">
+            Every inbound SMS costs one external-index read plus N Memory
+            GETs (one per profile the tech has ever held). Composite keys
+            fold this into a single Twilio call; here, the app carries it.
+            Small, but real — and worth budgeting for at scale.
+          </div>
+        </div>
+        <div class="point violet">
+          <div class="p-title">Two systems, but the split is boring</div>
+          <div class="p-desc">
+            Unlike the phone-only architecture (where Memory becomes redundant
+            and the DB owns job identity), here the external store only holds
+            a phone→profileIds map. Everything semantic — status, timestamps,
+            conversation wiring, observations, summaries — stays in Memory.
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- SLIDE 4e — With jobID identifier · Assign new job (Mermaid)  -->
+  <!-- ============================================================ -->
+  <section class="slide" data-menu="Assign new job (Mermaid)" data-menu-group="With jobID identifier">
+    <div class="slide-inner">
+      <div class="eyebrow violet">Sequence · Assign new job · jobID identifier</div>
+      <h1>One extra hop for the phone index — the rest is Twilio.</h1>
+      <p class="lede">
+        The uniqueness guardrail is gone; multiple active jobs per tech are
+        allowed. <code>state.py</code> owns the phone → [profileIds] map (a
+        JSON file); Twilio Memory owns everything semantic about the job.
+      </p>
+
+      <div class="diagram-panel uml" style="padding: 24px 32px;">
+        <div class="diagram-label">POST /api/assign-job · Mermaid version</div>
+        <pre class="mermaid" style="background: transparent; margin: 0; text-align: center;">
+sequenceDiagram
+  autonumber
+  actor UI as Admin UI
+  participant App as App
+  participant Idx as Phone index (state.py)
+  participant Mem as Twilio Memory
+  participant CV1 as Conversation v1
+  participant Orc as Orchestrator v2
+  actor Tech as Tech phone
+
+  UI->>App: POST /api/assign-job { job_id }
+  activate App
+  Note over App: no uniqueness guardrail —<br/>multiple actives per phone are allowed
+
+  App->>Mem: POST /Stores/{store_id}/Profiles<br/>Contact:{ jobID }, Job:{ status:"active", mobile: TECH_PHONE }
+  Note over Mem: jobID identifier enforceUnique: true<br/>→ resolves to existing profile if this jobID already exists
+  Mem-->>App: profile { profile_id, traits.Job }
+
+  App->>Idx: record_profile(TECH_PHONE, profile_id)
+  Note over Idx: JSON file at .state/phone_index.json<br/>+44 7… → [PR_a1b2, PR_c3d4, PR_e5f6]
+
+  alt no reusable Job.conversation_id
+    App->>CV1: POST /v1/Services/{service_id}/Conversations
+    CV1-->>App: channel_id = "CH…"
+    App->>Orc: POST /v2/Conversations<br/>orchestrator_config_id + participant (CUSTOMER, SMS, TECH_PHONE, channel_id) + participant (AI_AGENT, SMS, TWILIO_PHONE, channel_id)
+    Orc-->>App: conversation_id
+    App->>Mem: PATCH /Profiles/{id}<br/>Job:{ status, lastActiveAt, conversation_id, channel_id }
+  end
+
+  App->>Orc: POST /Conversations/{conversation_id}/Actions<br/>SEND_MESSAGE · AI_NUMBER → TECH_PHONE
+  Orc-->>App: action { related.messageSid = "SM…" }
+  Orc->>Tech: SMS delivered
+  App->>Orc: POST /Conversations/{conversation_id}/Communications<br/>resourceId = messageSid (cross-links status callbacks)
+  App-->>UI: 200 OK { profile_id, conversation_id }
+  deactivate App
+        </pre>
+      </div>
+      <p class="diagram-caption">
+        The only extra actor vs. the composite-key flow is
+        <code>Phone index</code> — one line of app-owned bookkeeping so the
+        inbound-SMS router can answer "which profiles belong to this phone?"
+      </p>
+    </div>
+  </section>
+
+</div>
+
+<nav class="deck-nav">
+  <button class="nav-btn" id="prev-btn" onclick="goTo(current-1)" aria-label="Previous">‹</button>
+  <div class="dots" id="dots"></div>
+  <span class="counter" id="counter">01 / 01</span>
+  <button class="nav-btn" id="next-btn" onclick="goTo(current+1)" aria-label="Next">›</button>
+</nav>
+
+<script>
+  var slides = document.querySelectorAll('.slide');
+  var total = slides.length;
+  var current = 0;
+  var dotsWrap = document.getElementById('dots');
+  var sideMenu = document.getElementById('side-menu');
+  var menuItems = [];
+  var lastGroup = null;
+
+  for (var i = 0; i < total; i++) {
+    var d = document.createElement('button');
+    d.className = 'dot' + (i === 0 ? ' active' : '');
+    d.setAttribute('aria-label', 'Go to slide ' + (i + 1));
+    d.onclick = (function(idx) { return function() { goTo(idx); }; })(i);
+    dotsWrap.appendChild(d);
+
+    var group = slides[i].dataset.menuGroup;
+    if (group && group !== lastGroup) {
+      var g = document.createElement('div');
+      g.className = 'side-menu-group';
+      g.textContent = group;
+      sideMenu.appendChild(g);
+      lastGroup = group;
+    }
+
+    var m = document.createElement('button');
+    m.className = 'side-menu-item' + (i === 0 ? ' active' : '');
+    m.textContent = slides[i].dataset.menu || ('Slide ' + (i + 1));
+    m.onclick = (function(idx) { return function() {
+      goTo(idx);
+      if (window.innerWidth < 900) closeMenu();
+    }; })(i);
+    sideMenu.appendChild(m);
+    menuItems.push(m);
+  }
+
+  var menuToggle = document.getElementById('menu-toggle');
+  var menuBackdrop = document.getElementById('menu-backdrop');
+  function openMenu() { sideMenu.classList.add('open'); menuBackdrop.classList.add('open'); document.body.classList.add('menu-open'); }
+  function closeMenu() { sideMenu.classList.remove('open'); menuBackdrop.classList.remove('open'); document.body.classList.remove('menu-open'); }
+  menuToggle.addEventListener('click', function () {
+    sideMenu.classList.contains('open') ? closeMenu() : openMenu();
+  });
+  menuBackdrop.addEventListener('click', closeMenu);
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+  function goTo(i) {
+    if (i < 0 || i >= total) return;
+    slides[current].classList.remove('active');
+    dotsWrap.children[current].classList.remove('active');
+    current = i;
+    var incoming = slides[current];
+    incoming.classList.add('active');
+    incoming.scrollTop = 0;
+    dotsWrap.children[current].classList.add('active');
+    menuItems.forEach(function (m) { m.classList.remove('active'); });
+    menuItems[current].classList.add('active');
+    document.getElementById('counter').textContent = pad(current + 1) + ' / ' + pad(total);
+    document.getElementById('prev-btn').disabled = current === 0;
+    document.getElementById('next-btn').disabled = current === total - 1;
+  }
+
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') goTo(current + 1);
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') goTo(current - 1);
+  });
+
+  goTo(0);
+</script>
+
+<!-- Mermaid: declarative sequence diagrams themed to the Paper palette -->
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: true,
+    securityLevel: 'loose',
+    theme: 'base',
+    themeVariables: {
+      fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
+      fontSize: '14px',
+      primaryColor:        '#FDD35C',
+      primaryBorderColor:  '#E8A62A',
+      primaryTextColor:    '#D9482E',
+      lineColor:           '#E88030',
+      signalColor:         '#E88030',
+      signalTextColor:     '#2B241E',
+      noteBkgColor:        '#FFF6DC',
+      noteBorderColor:     '#E8A62A',
+      noteTextColor:       '#4E4033',
+      actorBkg:            '#FDD35C',
+      actorBorder:         '#E8A62A',
+      actorTextColor:      '#D9482E',
+      actorLineColor:      '#E88030',
+      activationBkgColor:  '#F0EFEA',
+      activationBorderColor:'#B8B0A0',
+      labelBoxBkgColor:    '#EEF3F9',
+      labelBoxBorderColor: '#6BA4E7',
+      labelTextColor:      '#4A6B85',
+      sequenceNumberColor: '#2B241E',
+      altBackground:       'rgba(107,164,231,0.06)'
+    },
+    sequence: {
+      diagramMarginX: 24,
+      diagramMarginY: 12,
+      boxMargin: 20,
+      noteMargin: 12,
+      messageMargin: 50,
+      mirrorActors: false,
+      wrap: true
+    }
+  });
+</script>
+
+</body>
+</html>

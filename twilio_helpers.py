@@ -167,7 +167,7 @@ async def create_or_resolve_profile(
     POSTing the same jobID returns the existing profile.
     """
     contact: dict[str, Any] = {
-        "chat": job_id,
+        # "chat": job_id,
         "jobID": job_id,
     }
     if first_name:
